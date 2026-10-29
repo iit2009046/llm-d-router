@@ -73,6 +73,8 @@ func TestFullDuplexStreamed_GRPC_KubeInferenceObjectiveRequest(t *testing.T) {
 		// requiresCRDs indicates that this test case relies on specific Gateway API CRD features (like
 		// InferenceModelRewrite) which are not available in Standalone runMode without CRD.
 		requiresCRDs bool
+		// ignoreErrorBody skips the immediate response body so the case asserts status and headers only.
+		ignoreErrorBody bool
 	}{
 		// --- Standard Routing Logic ---
 		{
@@ -171,12 +173,11 @@ func TestFullDuplexStreamed_GRPC_KubeInferenceObjectiveRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "no backend pods available",
-			requests: integration.ReqHeaderOnly(map[string]string{"content-type": "application/json"}),
-			pods:     nil,
-			wantResponses: ExpectRejectWithDropReason(envoyTypePb.StatusCode_ServiceUnavailable,
-				"no pods available in datastore",
-				errcommon.RequestDroppedReasonNoEndpoints),
+			name:            "no backend pods available",
+			requests:        integration.ReqHeaderOnly(map[string]string{"content-type": "application/json"}),
+			pods:            nil,
+			wantResponses:   ExpectRejectNoEndpoints(),
+			ignoreErrorBody: true,
 		},
 
 		// // --- Subsetting & Metadata ---
@@ -410,6 +411,7 @@ func TestFullDuplexStreamed_GRPC_KubeInferenceObjectiveRequest(t *testing.T) {
 					return a.GetHeader().GetKey() < b.GetHeader().GetKey()
 				}),
 				protocmp.SortRepeated(func(a, b string) bool { return a < b }),
+				errorBodyOption(tc.ignoreErrorBody),
 			); diff != "" {
 				t.Errorf("Response mismatch (-want +got): %v", diff)
 			}

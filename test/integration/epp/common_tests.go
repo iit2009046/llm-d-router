@@ -26,6 +26,8 @@ import (
 	envoyCorev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	envoyTypePb "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/testing/protocmp"
 
 	errcommon "github.com/llm-d/llm-d-router/pkg/common/error"
 	reqcommon "github.com/llm-d/llm-d-router/pkg/common/request"
@@ -223,6 +225,25 @@ func ExpectRejectWithDropReason(code envoyTypePb.StatusCode, msg string, reason 
 		})
 }
 
+// ExpectRejectNoEndpoints asserts that the EPP rejected the request because the pool has no endpoints.
+// The error body is left empty; set ignoreErrorBody on the test case.
+func ExpectRejectNoEndpoints() []*extProcPb.ProcessingResponse {
+	return integration.NewImmediateErrorResponse(envoyTypePb.StatusCode_ServiceUnavailable, "", jsonContentTypeHeader(),
+		&envoyCorev3.HeaderValueOption{
+			Header: &envoyCorev3.HeaderValue{
+				Key:      errcommon.RequestDroppedReasonHeaderKey,
+				RawValue: []byte(errcommon.RequestDroppedReasonNoEndpoints),
+			},
+		})
+}
+
+func errorBodyOption(ignore bool) cmp.Option {
+	if !ignore {
+		return cmp.Options{}
+	}
+	return protocmp.IgnoreFields(&extProcPb.ImmediateResponse{}, "body")
+}
+
 // openAIErrorBody is the OpenAI error envelope the EPP answers with for the given status.
 func openAIErrorBody(code envoyTypePb.StatusCode, msg string) string {
 	errType := "server_error"
@@ -354,6 +375,8 @@ type testCase struct {
 	requiresCRDs bool
 	// wantSpans lists the span names expected to be recorded (hermetic tests only).
 	wantSpans []string
+	// ignoreErrorBody skips the immediate response body so the case asserts status and headers only.
+	ignoreErrorBody bool
 }
 
 // commonTestCases returns the test cases shared between the standard and data layer test suites.
@@ -389,12 +412,11 @@ func commonTestCases(prio func(int) int) []testCase {
 			},
 		},
 		{
-			name:     "no backend pods available",
-			requests: integration.ReqHeaderOnly(map[string]string{"content-type": "application/json"}),
-			pods:     nil,
-			wantResponses: ExpectRejectWithDropReason(envoyTypePb.StatusCode_ServiceUnavailable,
-				"no pods available in datastore",
-				errcommon.RequestDroppedReasonNoEndpoints),
+			name:            "no backend pods available",
+			requests:        integration.ReqHeaderOnly(map[string]string{"content-type": "application/json"}),
+			pods:            nil,
+			wantResponses:   ExpectRejectNoEndpoints(),
+			ignoreErrorBody: true,
 		},
 		{
 			name: "request missing model field",

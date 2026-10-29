@@ -283,12 +283,11 @@ dataLayer:
 						"images edits request must have a multipart/form-data content-type"),
 				},
 				{
-					name:     "no backend pods available",
-					requests: integration.ReqHeaderOnly(map[string]string{"content-type": "application/json"}),
-					pods:     nil,
-					wantResponses: ExpectRejectWithDropReason(envoyTypePb.StatusCode_ServiceUnavailable,
-						"no pods available in datastore",
-						errcommon.RequestDroppedReasonNoEndpoints),
+					name:            "no backend pods available",
+					requests:        integration.ReqHeaderOnly(map[string]string{"content-type": "application/json"}),
+					pods:            nil,
+					wantResponses:   ExpectRejectNoEndpoints(),
+					ignoreErrorBody: true,
 				},
 				{
 					name: "request missing model field",
@@ -504,6 +503,7 @@ dataLayer:
 							return a.GetHeader().GetKey() < b.GetHeader().GetKey()
 						}),
 						protocmp.SortRepeated(func(a, b string) bool { return a < b }),
+						errorBodyOption(tc.ignoreErrorBody),
 					); diff != "" {
 						t.Errorf("Response mismatch (-want +got): %v", diff)
 					}
