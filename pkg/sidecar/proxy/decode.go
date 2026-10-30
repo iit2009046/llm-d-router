@@ -146,6 +146,16 @@ func (s *Server) runChunkedDecodeFromMap(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	// vLLM applies min_tokens to each request, so each chunk carries only the part of the floor not yet generated.
+	minTokens, _ := toInt(body[reqcommon.FieldMinTokens])
+	// Capping min_tokens to a chunk would hide the decoder's rejection of min_tokens > max_tokens.
+	if originalMaxTokens > 0 && minTokens > originalMaxTokens {
+		s.logger.V(logging.DEBUG).Info("chunked decode: min_tokens exceeds token budget, using regular decode",
+			"minTokens", minTokens, "maxTokens", originalMaxTokens)
+		regularDecode()
+		return
+	}
+
 	// If the token budget fits within a single chunk, skip chunking entirely.
 	if originalMaxTokens > 0 && originalMaxTokens <= s.config.DecodeChunkSize {
 		logger.V(logging.DEBUG).Info("chunked decode: token budget <= chunk size, using regular decode",
@@ -221,6 +231,13 @@ func (s *Server) runChunkedDecodeFromMap(w http.ResponseWriter, r *http.Request,
 		chunkReq := maps.Clone(body)
 		chunkReq[reqcommon.FieldMaxTokens] = chunkBudget
 		chunkReq[reqcommon.FieldMaxCompletionTokens] = chunkBudget
+		if minTokens > 0 {
+			if need := minTokens - totalTokens; need > 0 {
+				chunkReq[reqcommon.FieldMinTokens] = min(need, chunkBudget)
+			} else {
+				delete(chunkReq, reqcommon.FieldMinTokens)
+			}
+		}
 		chunkReq[reqcommon.FieldStream] = false
 		delete(chunkReq, reqcommon.FieldStreamOptions)
 

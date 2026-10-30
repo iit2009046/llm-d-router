@@ -390,6 +390,60 @@ var _ = Describe("Chunked Decode", func() {
 		Entry("tool_choice required", `,"tool_choice":"required"`),
 	)
 
+	DescribeTable("sends each chunk the part of min_tokens not yet generated",
+		func(streaming bool, minTokens string, wantMinTokens []string) {
+			raw := fmt.Sprintf(`{"messages":[{"role":"user","content":"Hi"}],"max_tokens":20%s,"stream":%t}`, minTokens, streaming)
+			var requests []map[string]json.RawMessage
+			server := NewProxy(Config{DecodeChunkSize: 5})
+			server.logger = logr.Discard()
+			server.decoderProxy = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				Expect(json.NewDecoder(r.Body).Decode(&body)).To(Succeed())
+				requests = append(requests, body)
+				_, err := io.WriteString(w, chatResponse("text ", finishReasonLength, 8, 5))
+				Expect(err).ToNot(HaveOccurred())
+			})
+			response := httptest.NewRecorder()
+			server.runChunkedDecode(response, httptest.NewRequest(http.MethodPost, reqcommon.PathChatCompletions, strings.NewReader(raw)))
+			Expect(response.Code).To(Equal(http.StatusOK))
+			Expect(requests).To(HaveLen(len(wantMinTokens)))
+			for index, request := range requests {
+				if wantMinTokens[index] == "" {
+					Expect(request).ToNot(HaveKey(reqcommon.FieldMinTokens), "chunk %d", index)
+					continue
+				}
+				Expect(string(request[reqcommon.FieldMinTokens])).To(Equal(wantMinTokens[index]), "chunk %d", index)
+			}
+		},
+		Entry("floor met in the first chunk", false, `,"min_tokens":4`, []string{"4", "", "", ""}),
+		Entry("floor spans several chunks", false, `,"min_tokens":12`, []string{"5", "5", "2", ""}),
+		Entry("floor met in the first chunk, streaming", true, `,"min_tokens":4`, []string{"4", "", "", ""}),
+		Entry("no min_tokens", false, "", []string{"", "", "", ""}),
+		Entry("zero min_tokens", false, `,"min_tokens":0`, []string{"0", "0", "0", "0"}),
+	)
+
+	DescribeTable("forwards requests whose min_tokens exceeds max_tokens unchanged",
+		func(streaming bool) {
+			raw := fmt.Sprintf(`{"messages":[{"role":"user","content":"Hi"}],"max_tokens":20,"min_tokens":30,"stream":%t}`, streaming)
+			server := NewProxy(Config{DecodeChunkSize: 5})
+			server.logger = logr.Discard()
+			calls := 0
+			server.decoderProxy = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				body, err := io.ReadAll(r.Body)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(string(body)).To(Equal(raw))
+				w.WriteHeader(http.StatusBadRequest)
+			})
+			response := httptest.NewRecorder()
+			server.runChunkedDecode(response, httptest.NewRequest(http.MethodPost, reqcommon.PathChatCompletions, strings.NewReader(raw)))
+			Expect(calls).To(Equal(1))
+			Expect(response.Code).To(Equal(http.StatusBadRequest))
+		},
+		Entry("non-streaming", false),
+		Entry("streaming", true),
+	)
+
 	It("still chunks when tools are declared but tool_choice is none", func() {
 		ti := newChunkedTestSetup(5, []string{
 			chatResponse("hello ", "length", 8, 5),
