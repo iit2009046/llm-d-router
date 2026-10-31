@@ -146,11 +146,10 @@ func (s *Server) runChunkedDecodeFromMap(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// vLLM applies min_tokens to each request, so each chunk carries only the part of the floor not yet generated.
-	minTokens, _ := toInt(body[reqcommon.FieldMinTokens])
-	// Capping min_tokens to a chunk would hide the decoder's rejection of min_tokens > max_tokens.
-	if originalMaxTokens > 0 && minTokens > originalMaxTokens {
-		logger.V(logging.DEBUG).Info("chunked decode: min_tokens exceeds token budget, using regular decode",
+	// The decoder rejects an invalid min_tokens; an unchunked request returns that 400 to the client unchanged.
+	minTokens, hasMinTokens := toInt(body[reqcommon.FieldMinTokens])
+	if hasMinTokens && (minTokens < 0 || (originalMaxTokens > 0 && minTokens > originalMaxTokens)) {
+		logger.V(logging.DEBUG).Info("chunked decode: invalid min_tokens, using regular decode",
 			"minTokens", minTokens, "maxTokens", originalMaxTokens)
 		regularDecode()
 		return
@@ -231,13 +230,6 @@ func (s *Server) runChunkedDecodeFromMap(w http.ResponseWriter, r *http.Request,
 		chunkReq := maps.Clone(body)
 		chunkReq[reqcommon.FieldMaxTokens] = chunkBudget
 		chunkReq[reqcommon.FieldMaxCompletionTokens] = chunkBudget
-		if minTokens > 0 {
-			if need := minTokens - totalTokens; need > 0 {
-				chunkReq[reqcommon.FieldMinTokens] = min(need, chunkBudget)
-			} else {
-				delete(chunkReq, reqcommon.FieldMinTokens)
-			}
-		}
 		chunkReq[reqcommon.FieldStream] = false
 		delete(chunkReq, reqcommon.FieldStreamOptions)
 
@@ -245,10 +237,7 @@ func (s *Server) runChunkedDecodeFromMap(w http.ResponseWriter, r *http.Request,
 		// min_tokens would otherwise exceed the lowered per-chunk max_tokens.
 		// Once the floor has been met, drop it so a later chunk is not forced
 		// to suppress EOS and does not get min_tokens > max_tokens.
-		// An invalid client value is forwarded unchanged so the first chunk
-		// fails with the same 400 as an unchunked request.
-		if minTokens, ok := toInt(body[reqcommon.FieldMinTokens]); ok &&
-			minTokens >= 0 && (originalMaxTokens < 0 || minTokens <= originalMaxTokens) {
+		if hasMinTokens {
 			if remainingMin := minTokens - totalTokens; remainingMin > 0 {
 				chunkReq[reqcommon.FieldMinTokens] = min(remainingMin, chunkBudget)
 			} else {

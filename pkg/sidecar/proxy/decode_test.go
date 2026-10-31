@@ -425,13 +425,12 @@ var _ = Describe("Chunked Decode", func() {
 		Entry("floor met in the first chunk, streaming", true, `,"max_tokens":20,"min_tokens":4`, []string{"4", "", "", ""}),
 		Entry("floor spans several chunks without max_tokens", false, `,"min_tokens":12`, []string{"5", "5", "2", ""}),
 		Entry("no min_tokens", false, `,"max_tokens":20`, []string{"", "", "", ""}),
-		Entry("zero min_tokens", false, `,"max_tokens":20,"min_tokens":0`, []string{"0", "0", "0", "0"}),
-		Entry("negative min_tokens", false, `,"max_tokens":20,"min_tokens":-1`, []string{"-1", "-1", "-1", "-1"}),
+		Entry("zero min_tokens", false, `,"max_tokens":20,"min_tokens":0`, []string{"", "", "", ""}),
 	)
 
-	DescribeTable("forwards requests whose min_tokens exceeds max_tokens unchanged",
-		func(streaming bool) {
-			raw := fmt.Sprintf(`{"messages":[{"role":"user","content":"Hi"}],"max_tokens":20,"min_tokens":30,"stream":%t}`, streaming)
+	DescribeTable("forwards requests with an invalid min_tokens unchanged",
+		func(minTokens int, streaming bool) {
+			raw := fmt.Sprintf(`{"messages":[{"role":"user","content":"Hi"}],"max_tokens":20,"min_tokens":%d,"stream":%t}`, minTokens, streaming)
 			server := NewProxy(Config{DecodeChunkSize: 5})
 			server.logger = logr.Discard()
 			calls := 0
@@ -440,6 +439,7 @@ var _ = Describe("Chunked Decode", func() {
 				body, err := io.ReadAll(r.Body)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(string(body)).To(Equal(raw))
+				Expect(w.Header().Get("Content-Type")).To(BeEmpty())
 				w.WriteHeader(http.StatusBadRequest)
 			})
 			response := httptest.NewRecorder()
@@ -447,8 +447,10 @@ var _ = Describe("Chunked Decode", func() {
 			Expect(calls).To(Equal(1))
 			Expect(response.Code).To(Equal(http.StatusBadRequest))
 		},
-		Entry("non-streaming", false),
-		Entry("streaming", true),
+		Entry("above max_tokens", 30, false),
+		Entry("above max_tokens, streaming", 30, true),
+		Entry("negative", -1, false),
+		Entry("negative, streaming", -1, true),
 	)
 
 	It("still chunks when tools are declared but tool_choice is none", func() {
