@@ -150,7 +150,7 @@ func (s *Server) runChunkedDecodeFromMap(w http.ResponseWriter, r *http.Request,
 	minTokens, _ := toInt(body[reqcommon.FieldMinTokens])
 	// Capping min_tokens to a chunk would hide the decoder's rejection of min_tokens > max_tokens.
 	if originalMaxTokens > 0 && minTokens > originalMaxTokens {
-		s.logger.V(logging.DEBUG).Info("chunked decode: min_tokens exceeds token budget, using regular decode",
+		logger.V(logging.DEBUG).Info("chunked decode: min_tokens exceeds token budget, using regular decode",
 			"minTokens", minTokens, "maxTokens", originalMaxTokens)
 		regularDecode()
 		return

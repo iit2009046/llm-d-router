@@ -391,8 +391,8 @@ var _ = Describe("Chunked Decode", func() {
 	)
 
 	DescribeTable("sends each chunk the part of min_tokens not yet generated",
-		func(streaming bool, minTokens string, wantMinTokens []string) {
-			raw := fmt.Sprintf(`{"messages":[{"role":"user","content":"Hi"}],"max_tokens":20%s,"stream":%t}`, minTokens, streaming)
+		func(streaming bool, limits string, wantMinTokens []string) {
+			raw := fmt.Sprintf(`{"messages":[{"role":"user","content":"Hi"}]%s,"stream":%t}`, limits, streaming)
 			var requests []map[string]json.RawMessage
 			server := NewProxy(Config{DecodeChunkSize: 5})
 			server.logger = logr.Discard()
@@ -400,7 +400,12 @@ var _ = Describe("Chunked Decode", func() {
 				var body map[string]json.RawMessage
 				Expect(json.NewDecoder(r.Body).Decode(&body)).To(Succeed())
 				requests = append(requests, body)
-				_, err := io.WriteString(w, chatResponse("text ", finishReasonLength, 8, 5))
+				// Ends requests without max_tokens, which have no token budget to exhaust.
+				reason := finishReasonLength
+				if len(requests) == len(wantMinTokens) {
+					reason = "stop"
+				}
+				_, err := io.WriteString(w, chatResponse("text ", reason, 8, 5))
 				Expect(err).ToNot(HaveOccurred())
 			})
 			response := httptest.NewRecorder()
@@ -415,11 +420,13 @@ var _ = Describe("Chunked Decode", func() {
 				Expect(string(request[reqcommon.FieldMinTokens])).To(Equal(wantMinTokens[index]), "chunk %d", index)
 			}
 		},
-		Entry("floor met in the first chunk", false, `,"min_tokens":4`, []string{"4", "", "", ""}),
-		Entry("floor spans several chunks", false, `,"min_tokens":12`, []string{"5", "5", "2", ""}),
-		Entry("floor met in the first chunk, streaming", true, `,"min_tokens":4`, []string{"4", "", "", ""}),
-		Entry("no min_tokens", false, "", []string{"", "", "", ""}),
-		Entry("zero min_tokens", false, `,"min_tokens":0`, []string{"0", "0", "0", "0"}),
+		Entry("floor met in the first chunk", false, `,"max_tokens":20,"min_tokens":4`, []string{"4", "", "", ""}),
+		Entry("floor spans several chunks", false, `,"max_tokens":20,"min_tokens":12`, []string{"5", "5", "2", ""}),
+		Entry("floor met in the first chunk, streaming", true, `,"max_tokens":20,"min_tokens":4`, []string{"4", "", "", ""}),
+		Entry("floor spans several chunks without max_tokens", false, `,"min_tokens":12`, []string{"5", "5", "2", ""}),
+		Entry("no min_tokens", false, `,"max_tokens":20`, []string{"", "", "", ""}),
+		Entry("zero min_tokens", false, `,"max_tokens":20,"min_tokens":0`, []string{"0", "0", "0", "0"}),
+		Entry("negative min_tokens", false, `,"max_tokens":20,"min_tokens":-1`, []string{"-1", "-1", "-1", "-1"}),
 	)
 
 	DescribeTable("forwards requests whose min_tokens exceeds max_tokens unchanged",
