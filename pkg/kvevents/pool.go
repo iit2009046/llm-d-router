@@ -526,7 +526,9 @@ func realignExtraFeatures(engineFeatures []*kvblock.BlockExtraFeatures, canonica
 				// Placeholders don't overlap, so only the item ending engine block i-1
 				// can continue into block i, where it is the first entry. Block i-1 is
 				// searched whole because block 0 ends with the cache salt, if any.
-				if prev != nil && len(hashes) > 0 && slices.Contains(prev.MMHashes, hashes[0]) {
+				// The event offset, when present, tells a continuation from a new copy.
+				if prev != nil && len(hashes) > 0 && ef.FirstContinuation != kvblock.MMContinuationNew &&
+					slices.Contains(prev.MMHashes, hashes[0]) {
 					hashes = hashes[1:]
 				}
 				canonical[canonicalIdx].MMHashes = append(canonical[canonicalIdx].MMHashes, hashes...)
